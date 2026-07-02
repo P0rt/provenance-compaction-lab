@@ -21,3 +21,4 @@ prose:
   taint_precision: 0.9
   parse_failure_rate: 0.0
   anthropic_model: claude-haiku-4-5
+  openai_model: gpt-5-mini            # used only with --llm openai

@@ -20,7 +20,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .llm import AnthropicProseChannel, MockProseChannel, ProseChannel
+from .llm import (
+    AnthropicProseChannel,
+    MockProseChannel,
+    OpenAIProseChannel,
+    ProseChannel,
+)
 from .metrics import (
     RunKey,
     aggregate_drift,
@@ -54,6 +59,7 @@ class ExperimentSpec:
     prose_taint_precision: float
     prose_parse_failure_rate: float
     anthropic_model: str
+    openai_model: str
 
 
 def load_spec(path: Path) -> ExperimentSpec:
@@ -83,12 +89,15 @@ def load_spec(path: Path) -> ExperimentSpec:
         prose_taint_precision=float(prose.get("taint_precision", 0.9)),
         prose_parse_failure_rate=float(prose.get("parse_failure_rate", 0.0)),
         anthropic_model=str(prose.get("anthropic_model", "claude-haiku-4-5")),
+        openai_model=str(prose.get("openai_model", "gpt-5-mini")),
     )
 
 
 def _make_channel(spec: ExperimentSpec, llm: str, seed: int) -> ProseChannel:
     if llm == "anthropic":
         return AnthropicProseChannel(model=spec.anthropic_model)
+    if llm == "openai":
+        return OpenAIProseChannel(model=spec.openai_model)
     return MockProseChannel(
         rng=np.random.default_rng(seed + PROSE_RNG_OFFSET),
         sigma=spec.prose_sigma,
@@ -209,8 +218,8 @@ def main(argv: list[str] | None = None) -> None:
         help="simulated noisy prose channel (default; no API key needed)",
     )
     group.add_argument(
-        "--llm", dest="llm", choices=["anthropic"],
-        help="real LLM prose channel (needs ANTHROPIC_API_KEY)",
+        "--llm", dest="llm", choices=["anthropic", "openai"],
+        help="real LLM prose channel (needs ANTHROPIC_API_KEY / OPENAI_API_KEY)",
     )
     p_run.set_defaults(llm="mock")
     p_run.add_argument(

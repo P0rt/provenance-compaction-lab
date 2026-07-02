@@ -242,6 +242,92 @@ class AnthropicProseChannel:
         )
 
 
+class OpenAIProseChannel:
+    """Real LLM channel via the OpenAI API (``--llm openai``): same two-call
+    summarize→extract pipeline as the Anthropic channel. Needs
+    ``OPENAI_API_KEY``. Parses defensively; falls back to worst-case scores
+    on parse failure (counted as a metric)."""
+
+    parallel_safe = True
+
+    def __init__(self, model: str = "gpt-5-mini", max_attempts: int = 5) -> None:
+        import openai
+
+        self._client = openai.OpenAI(timeout=60.0)
+        self._openai = openai
+        self.model = model
+        self.max_attempts = max_attempts
+
+    def _complete(self, prompt: str, max_tokens: int) -> str:
+        import time
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_attempts):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    # gpt-5 family: reasoning tokens draw from the completion
+                    # budget, so keep reasoning minimal and the budget generous
+                    max_completion_tokens=max_tokens + 700,
+                    reasoning_effort="minimal",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.choices[0].message.content or ""
+            except (
+                self._openai.APITimeoutError,
+                self._openai.APIConnectionError,
+                self._openai.RateLimitError,
+                self._openai.InternalServerError,
+            ) as err:
+                last_error = err
+                time.sleep(min(2.0**attempt, 30.0))
+        raise RuntimeError("prose channel exhausted retries") from last_error
+
+    def compress(
+        self, *, scores: dict[str, float], taints: frozenset[str], step: int
+    ) -> ProseExtraction:
+        n_true = len(taints)
+        score_lines = "\n".join(f"- {a}: {scores[a]:.3f}" for a in AXES)
+        taint_lines = "\n".join(f"- {t}" for t in sorted(taints)) or "(none)"
+        try:
+            blob = self._complete(
+                _SUMMARIZE_PROMPT.format(scores=score_lines, taints=taint_lines),
+                max_tokens=300,
+            )
+            raw = self._complete(_EXTRACT_PROMPT.format(summary=blob), max_tokens=1000)
+        except RuntimeError:
+            return ProseExtraction(
+                scores=dict(WORST_CASE_SCORES),
+                taints=frozenset(),
+                blob=f"[channel failure @step {step}]",
+                parse_failed=True,
+                n_true_taints=n_true,
+                n_kept=0,
+                n_fabricated=0,
+            )
+        parsed = _parse_extraction(raw)
+        if parsed is None:
+            return ProseExtraction(
+                scores=dict(WORST_CASE_SCORES),
+                taints=frozenset(),
+                blob=blob,
+                parse_failed=True,
+                n_true_taints=n_true,
+                n_kept=0,
+                n_fabricated=0,
+            )
+        out_scores, out_taints = parsed
+        return ProseExtraction(
+            scores=out_scores,
+            taints=out_taints,
+            blob=blob,
+            parse_failed=False,
+            n_true_taints=n_true,
+            n_kept=len(out_taints & taints),
+            n_fabricated=len(out_taints - taints),
+        )
+
+
 def _parse_extraction(raw: str) -> tuple[dict[str, float], frozenset[str]] | None:
     """Defensive parse of the extraction call's output."""
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
