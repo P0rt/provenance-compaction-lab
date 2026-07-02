@@ -149,23 +149,41 @@ class AnthropicProseChannel:
     (counted as a metric).
     """
 
-    def __init__(self, model: str = "claude-haiku-4-5") -> None:
+    def __init__(self, model: str = "claude-haiku-4-5", max_attempts: int = 5) -> None:
         import anthropic
 
-        self._client = anthropic.Anthropic()
+        self._client = anthropic.Anthropic(timeout=60.0)
+        self._anthropic = anthropic
         self.model = model
+        self.max_attempts = max_attempts
 
     def _complete(self, prompt: str, max_tokens: int) -> str:
-        response = self._client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        parts: list[str] = []
-        for block in response.content:
-            if block.type == "text":
-                parts.append(block.text)
-        return "".join(parts)
+        """One API call with retry — a long run must survive transient network
+        failures; the SDK's built-in retries alone have killed 40-minute runs."""
+        import time
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_attempts):
+            try:
+                response = self._client.messages.create(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                parts: list[str] = []
+                for block in response.content:
+                    if block.type == "text":
+                        parts.append(block.text)
+                return "".join(parts)
+            except (
+                self._anthropic.APITimeoutError,
+                self._anthropic.APIConnectionError,
+                self._anthropic.RateLimitError,
+                self._anthropic.InternalServerError,
+            ) as err:
+                last_error = err
+                time.sleep(min(2.0**attempt, 30.0))
+        raise RuntimeError("prose channel exhausted retries") from last_error
 
     def compress(
         self, *, scores: dict[str, float], taints: frozenset[str], step: int
@@ -173,11 +191,24 @@ class AnthropicProseChannel:
         n_true = len(taints)
         score_lines = "\n".join(f"- {a}: {scores[a]:.3f}" for a in AXES)
         taint_lines = "\n".join(f"- {t}" for t in sorted(taints)) or "(none)"
-        blob = self._complete(
-            _SUMMARIZE_PROMPT.format(scores=score_lines, taints=taint_lines),
-            max_tokens=300,
-        )
-        raw = self._complete(_EXTRACT_PROMPT.format(summary=blob), max_tokens=1000)
+        try:
+            blob = self._complete(
+                _SUMMARIZE_PROMPT.format(scores=score_lines, taints=taint_lines),
+                max_tokens=300,
+            )
+            raw = self._complete(_EXTRACT_PROMPT.format(summary=blob), max_tokens=1000)
+        except RuntimeError:
+            # the round trip is unrecoverable — degrade to worst case rather
+            # than killing the run; counted as a parse failure
+            return ProseExtraction(
+                scores=dict(WORST_CASE_SCORES),
+                taints=frozenset(),
+                blob=f"[channel failure @step {step}]",
+                parse_failed=True,
+                n_true_taints=n_true,
+                n_kept=0,
+                n_fabricated=0,
+            )
         parsed = _parse_extraction(raw)
         if parsed is None:
             return ProseExtraction(
