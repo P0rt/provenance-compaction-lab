@@ -1,0 +1,20 @@
+# Fine cadence sweep (med profile only) — locates the prose-vs-structural_min
+# flip-rate crossover per gate class. Mock channel; cheap.
+steps: 500
+decision_every: 5
+compaction_cadence: [5, 10, 15, 20, 25, 35, 50, 75, 100]
+lineage_keep_hops: 5
+allowlist_window: 8
+reconstruction_penalty: 0.02
+degradation_profiles:
+  med:  {p_unverified: 0.15, p_fallback: 0.15, p_flaky: 0.08, p_stale: 0.25}
+seeds: 20
+death_spiral_run:
+  steps: 5000
+  compaction_cadence: 25
+prose:
+  sigma: 0.08
+  taint_recall: 0.6
+  taint_precision: 0.9
+  parse_failure_rate: 0.0
+  anthropic_model: claude-haiku-4-5

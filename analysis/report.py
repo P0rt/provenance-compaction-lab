@@ -130,13 +130,20 @@ def build_report(results_dir: Path) -> None:
         f"**{_pct(headline_fp)}** of irreversible-action decisions proceeded when the "
         f"uncompacted oracle said block.\n"
     )
-    add(
-        f"2. **structural_min memory dies at compaction cycle ≈ {death_cycle}** "
-        f"(death-spiral run, C={death_cadence}): from that cycle on, every "
-        f"reconstruction-coupled gate blocks permanently (0.98^{death_cycle} ≈ "
-        f"{0.98 ** (death_cycle or 0):.3f} < 0.5). `structural_perhop` "
-        f"{'ALSO dies — investigate' if perhop_dies else 'never dies'}.\n"
-    )
+    if death_cycle is not None:
+        add(
+            f"2. **structural_min memory dies at compaction cycle ≈ {death_cycle}** "
+            f"(death-spiral run, C={death_cadence}): from that cycle on, every "
+            f"reconstruction-coupled gate blocks permanently (0.98^{death_cycle} ≈ "
+            f"{0.98 ** death_cycle:.3f} < 0.5). `structural_perhop` "
+            f"{'ALSO dies — investigate' if perhop_dies else 'never dies'}.\n"
+        )
+    else:
+        add(
+            f"2. **structural_min memory did not die within this run's horizon** "
+            f"(death-spiral run, C={death_cadence}) — too few compaction cycles to "
+            f"cross the 0.5 gate floor; see the default config for the full run.\n"
+        )
     add(
         f"3. **Prose-vs-structural flip-rate ratio: {flip_ratio:.2f}×** "
         f"(prose {_pct(prose_flip)} vs structural_min {_pct(min_flip)} decisions flipped "

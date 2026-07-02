@@ -1,0 +1,23 @@
+# Real-LLM prose channel run (--llm anthropic). Deliberately small: the LLM
+# channel makes 2 API calls per live value per compaction, so the full matrix
+# would be thousands of calls. This config measures the REAL channel's
+# realized noise (recall / precision / parse failures) and flip rates on the
+# med profile at two cadences.
+steps: 500
+decision_every: 5
+compaction_cadence: [10, 25]
+lineage_keep_hops: 5
+allowlist_window: 8
+reconstruction_penalty: 0.02
+degradation_profiles:
+  med:  {p_unverified: 0.15, p_fallback: 0.15, p_flaky: 0.08, p_stale: 0.25}
+seeds: 2
+death_spiral_run:
+  steps: 500                # keep the LLM bill sane; the death spiral is a
+  compaction_cadence: 25    # structural-arm story and doesn't need real prose
+prose:
+  sigma: 0.08
+  taint_recall: 0.6
+  taint_precision: 0.9
+  parse_failure_rate: 0.0
+  anthropic_model: claude-haiku-4-5

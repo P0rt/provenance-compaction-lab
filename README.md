@@ -76,6 +76,13 @@ H1–H4 verdict table — and the three figures:
 | `results/fig_gate_agreement_by_class.png` | Gate agreement with the uncompacted oracle, per gate class and arm |
 | `results/fig_false_proceed_vs_cadence.png` | False-proceed rate on irreversible gates vs compaction cadence, per profile |
 
+`results/` is gitignored (it's regenerated output); a **frozen snapshot** of the
+summary and figures from the default config is committed under
+[`docs/summary-frozen.md`](docs/summary-frozen.md) and
+[`docs/figures/`](docs/figures/):
+
+![reconstruction decay: min-folded dies, per-hop fidelity survives](docs/figures/fig_reconstruction_decay.png)
+
 Everything is deterministic per seed (`numpy.random.default_rng`); the sha256
 of the canonical-JSON decision log is the fingerprint (see `tests/test_determinism.py`).
 
