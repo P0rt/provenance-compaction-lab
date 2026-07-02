@@ -1,0 +1,44 @@
+[project]
+name = "provenance-compaction-lab"
+version = "0.1.0"
+description = "Experiment harness measuring how agent-memory compaction corrupts provenance-based gate decisions"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "pyyaml>=6.0",
+    "anthropic>=0.49",
+]
+
+[project.scripts]
+prov-lab = "provlab.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "mypy>=1.13",
+    "pandas-stubs>=2.2",
+    "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/provlab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+files = ["src", "analysis", "tests"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["matplotlib.*"]
+ignore_missing_imports = true

@@ -1,0 +1,116 @@
+# provenance-compaction-lab
+
+Experiment harness measuring **how agent-memory compaction corrupts
+provenance-based gate decisions**. This repo backs Part 5 of the typed-provenance
+series:
+
+- Part 3 — [Trust Isn't a Scalar: typed provenance for agent chains](https://dev.to/p0rt/trust-isnt-a-scalar-typed-provenance-for-agent-chains-229p)
+- Part 4 — [Your Provenance Vector Dies at the Storage Boundary](https://dev.to/p0rt/your-provenance-vector-dies-at-the-storage-boundary-4cc)
+
+Part 4 ended on an experiment: *when provenance is compacted, how far do gate
+decisions diverge from what they would have been on uncompacted ground truth?*
+This is that experiment. It also answers two commenter questions with data:
+
+- **Boyko's recursion** — if `reconstruction` is reduced with a running min, it
+  decays monotonically toward full distrust after enough compaction cycles,
+  regardless of per-hop quality. Prediction: axis scores track closely between
+  arms; gates that inspect *lineage* are where decisions split.
+- **Quimby's rehydration question** — when lineage has been compressed and a
+  policy needs the detail: re-expand from an append-only log, or degrade to
+  treating the value as untrusted? What does each cost?
+
+## Quickstart
+
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/). Fresh clone:
+
+```sh
+uv sync
+uv run prov-lab run --config experiments/config.yaml --mock
+uv run prov-lab report
+```
+
+That runs the full matrix (3 cadences × 3 degradation profiles × 20 seeds,
+plus a 5000-step death-spiral run) in well under a minute on a laptop, then
+writes `results/summary.md` — opening with the four HEADLINE NUMBERS and the
+H1–H4 verdict table — and the three figures:
+
+| Figure | Reproduces |
+|---|---|
+| `results/fig_reconstruction_decay.png` | Boyko's recursion: min-folded reconstruction decays to distrust; per-hop fidelity does not (death-spiral run) |
+| `results/fig_gate_agreement_by_class.png` | Gate agreement with the uncompacted oracle, per gate class and arm |
+| `results/fig_false_proceed_vs_cadence.png` | False-proceed rate on irreversible gates vs compaction cadence, per profile |
+
+Everything is deterministic per seed (`numpy.random.default_rng`); the sha256
+of the canonical-JSON decision log is the fingerprint (see `tests/test_determinism.py`).
+
+## The model (matches the series)
+
+Five axes, canonical names: `freshness, capability, tool_integrity,
+verification, reconstruction` — floats in [0, 1], 1.0 pristine. Merge is
+element-wise **min**; `tainted_by` is a set union; lineage is an append-only
+list of hops.
+
+Four arms observe the **same trajectory** and differ only in storage:
+
+| Arm | Scores | Lineage | `reconstruction` |
+|---|---|---|---|
+| `ground_truth` | full | full | 1.0 forever (the oracle) |
+| `structural_min` | running min (lossless by construction) | last K hops + fold counts; folded taint ids dropped | ×(1−penalty) per compaction, folded in with min |
+| `structural_perhop` | same | same | tracked structurally: (n_compactions, worst_single_penalty, penalties) — gates derive fidelity = 1 − worst penalty |
+| `prose` | LLM summarize→extract replaces the vector | becomes the prose blob | whatever the extraction says |
+
+The prose arm runs a **mock noisy channel by default** (gaussian σ=0.08 on
+scores, taint recall 0.6, precision 0.9 — all configurable in
+`experiments/config.yaml`). `--llm anthropic` swaps in the real two-call
+pipeline via the `anthropic` SDK (`claude-haiku-4-5`), needs
+`ANTHROPIC_API_KEY`; parse failures fall back to worst-case scores and are
+counted.
+
+Nine gate policies cover the four classes of the taxonomy (score,
+reconstruction-coupled, lineage blocklist / default-allow, lineage allowlist /
+default-deny), with three flagged `irreversible=True`. Lineage gates evaluate
+in three modes — blind truncation, degrade-to-untrusted, rehydrate-on-demand
+from the append-only hop log — which is the Quimby three-way comparison in the
+report.
+
+## Repo layout
+
+```
+src/provlab/
+  axes.py         ProvenanceVector, min-merge, canonical axis names
+  lineage.py      Hop, FoldedPrefix, append-only JSONL hop log
+  compaction.py   the four arms
+  trajectory.py   deterministic generator + degradation events
+  policies.py     the 9 gates across the four classes
+  replay.py       run all arms over one trajectory, log decisions
+  metrics.py      agreement, false-proceed/stop, drift, decay curves
+  llm.py          mock noisy channel + anthropic prose channel
+  cli.py          prov-lab run / report
+experiments/config.yaml   the experiment matrix
+analysis/report.py        results/*.csv → results/summary.md + PNGs
+tests/                    property tests incl. the lossless-score invariant
+```
+
+## CLI
+
+```
+uv run prov-lab run    --config experiments/config.yaml [--mock|--llm anthropic]
+                       [--rehydrate|--no-rehydrate] [--seeds N] [--out results]
+uv run prov-lab report [--out results]
+```
+
+`--rehydrate` (default on) additionally evaluates lineage gates in rehydrate
+mode against the cold-storage hop log, counting lookups and bytes read.
+
+## Development
+
+```sh
+uv run pytest        # 46 tests: min-merge, lossless invariant (property-tested),
+                     # truncation + taint folding, both lineage gate styles,
+                     # determinism sha256, prose channel, reconstruction decay
+uv run mypy src tests analysis/report.py   # --strict, clean
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,20 @@
+steps: 500
+decision_every: 5
+compaction_cadence: [10, 25, 50]     # C
+lineage_keep_hops: 5                  # K
+allowlist_window: 8                   # W (> K deliberately, so starvation shows)
+reconstruction_penalty: 0.02          # per compaction
+degradation_profiles:
+  low:  {p_unverified: 0.05, p_fallback: 0.05, p_flaky: 0.03, p_stale: 0.10}
+  med:  {p_unverified: 0.15, p_fallback: 0.15, p_flaky: 0.08, p_stale: 0.25}
+  high: {p_unverified: 0.30, p_fallback: 0.30, p_flaky: 0.15, p_stale: 0.40}
+seeds: 20                             # per (cadence × profile) cell
+death_spiral_run:
+  steps: 5000
+  compaction_cadence: 25              # → 200 compactions; 0.98^200 ≈ 0.018
+prose:
+  sigma: 0.08                         # gaussian noise per axis score
+  taint_recall: 0.6
+  taint_precision: 0.9
+  parse_failure_rate: 0.0             # mock channel; the LLM channel measures real failures
+  anthropic_model: claude-haiku-4-5   # used only with --llm anthropic
