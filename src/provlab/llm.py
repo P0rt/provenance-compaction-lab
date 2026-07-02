@@ -44,6 +44,12 @@ class ProseExtraction:
 
 
 class ProseChannel(Protocol):
+    #: True when compress() may be called from multiple threads concurrently.
+    #: The mock channel is NOT (shared rng, and determinism depends on call
+    #: order); the real LLM channel is (stateless per call, and the LLM is
+    #: nondeterministic anyway).
+    parallel_safe: bool
+
     def compress(
         self, *, scores: dict[str, float], taints: frozenset[str], step: int
     ) -> ProseExtraction: ...
@@ -59,6 +65,8 @@ class MockProseChannel:
     * optional parse failures (worst-case scores), matching the defensive
       fallback of the real LLM channel
     """
+
+    parallel_safe = False
 
     def __init__(
         self,
@@ -148,6 +156,8 @@ class AnthropicProseChannel:
     Parses defensively; falls back to worst-case scores on parse failure
     (counted as a metric).
     """
+
+    parallel_safe = True
 
     def __init__(self, model: str = "claude-haiku-4-5", max_attempts: int = 5) -> None:
         import anthropic

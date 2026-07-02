@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from .axes import RECONSTRUCTION, ProvenanceVector, merge
 from .lineage import FoldedPrefix, Hop, Lineage, merge_lineages
-from .llm import ProseChannel
+from .llm import ProseChannel, ProseExtraction
 
 
 @dataclass
@@ -256,13 +256,10 @@ class ProseArm(Arm):
         self.stats = ProseStats()
 
     def compact(self, step: int) -> None:
-        for value_id in sorted(self.values):
+        value_ids = sorted(self.values)
+        extractions = self._compress_all(value_ids, step)
+        for value_id, out in zip(value_ids, extractions):
             state = self.values[value_id]
-            out = self.channel.compress(
-                scores=dict(state.vector.scores),
-                taints=frozenset(state.tainted_by),
-                step=step,
-            )
             self.stats.n_extractions += 1
             self.stats.n_parse_failures += int(out.parse_failed)
             self.stats.n_true_taints += out.n_true_taints
@@ -271,6 +268,27 @@ class ProseArm(Arm):
             state.vector = ProvenanceVector(scores=dict(out.scores))
             state.tainted_by = set(out.taints)
             state.lineage = Lineage(hops=[], folded=None, prose_blob=out.blob)
+
+    def _compress_all(self, value_ids: list[int], step: int) -> list["ProseExtraction"]:
+        """One summarize→extract round trip per live value. Serial for the
+        mock channel (shared rng: determinism depends on call order); the
+        real LLM channel is stateless per call, so its round trips run
+        concurrently — results are applied in sorted value-id order either way."""
+
+        def one(value_id: int) -> "ProseExtraction":
+            state = self.values[value_id]
+            return self.channel.compress(
+                scores=dict(state.vector.scores),
+                taints=frozenset(state.tainted_by),
+                step=step,
+            )
+
+        if not self.channel.parallel_safe or len(value_ids) <= 1:
+            return [one(value_id) for value_id in value_ids]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(8, len(value_ids))) as pool:
+            return list(pool.map(one, value_ids))
 
 
 def make_arms(
