@@ -32,6 +32,18 @@
 > H4 **fails** as stated, and the failure is itself a finding: on reconstruction-coupled gates the min-folded reconstruction axis is a *bigger* source of divergence than the noisy prose channel (the death spiral punishes structural_min before prose noise catches up), and on blocklist gates structural truncation forgets taints at a rate comparable to prose recall loss. Prose remains strictly worse on score gates (lossless for structural arms by construction) and catastrophically worse on allowlist gates.
 
 
+## Reconstruction death-cycle analytics (penalty p = 0.02)
+
+Closed form: memory dies for a gate with permanent-block threshold θ at
+n = ln(θ) / ln(1 − p) compaction cycles. Empirical column is the first
+cycle after which the gate blocks every oracle-allowed decision in the
+death-spiral run (— when the run's horizon was too short to reach it).
+
+| gate | θ | analytic n | first whole cycle | empirical (death-spiral) |
+|---|---|---|---|---|
+| archive_all_axes_floor | 0.50 | 34.3 | 35 | 35 |
+| publish_discounted_thresholds | 0.55 | 29.6 | 30 | 29 |
+
 ## Per-config results (blind mode, rates vs oracle)
 
 | cadence | profile | arm | agreement | false-proceed | false-stop |
@@ -63,6 +75,28 @@
 | 50 | high | structural_min | 97.01% | 1.18% | 1.82% |
 | 50 | high | structural_perhop | 98.43% | 1.18% | 0.39% |
 | 50 | high | prose | 96.50% | 1.05% | 2.45% |
+
+## Matched-slice comparison: mock vs real-LLM prose channel
+
+Computed on the **identical cells only** (C ∈ {10, 25}, profiles {med}, seeds {0, 1} — the intersection of both result sets; source: `results-llm/gate_metrics.csv`). The mock channel uses the configured noise parameters; the real column is the measured gpt-5-mini summarize→extract round trip.
+
+| arm | gate class | mock flip | real flip | mock fp | real fp | mock fs | real fs |
+|---|---|---|---|---|---|---|---|
+| structural_min | (all) | 12.25% | 12.25% | 4.67% | 4.67% | 7.58% | 7.58% |
+| structural_min | score | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% |
+| structural_min | reconstruction | 21.63% | 21.63% | 0.00% | 0.00% | 21.62% | 21.62% |
+| structural_min | lineage_blocklist | 21.00% | 21.00% | 21.00% | 21.00% | 0.00% | 0.00% |
+| structural_min | lineage_allowlist | 12.50% | 12.50% | 0.00% | 0.00% | 12.50% | 12.50% |
+| structural_perhop | (all) | 7.44% | 7.44% | 4.67% | 4.67% | 2.78% | 2.78% |
+| structural_perhop | score | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% |
+| structural_perhop | reconstruction | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% | 0.00% |
+| structural_perhop | lineage_blocklist | 21.00% | 21.00% | 21.00% | 21.00% | 0.00% | 0.00% |
+| structural_perhop | lineage_allowlist | 12.50% | 12.50% | 0.00% | 0.00% | 12.50% | 12.50% |
+| prose | (all) | 14.89% | 10.89% | 4.00% | 1.28% | 10.89% | 9.61% |
+| prose | score | 1.75% | 0.08% | 0.50% | 0.00% | 1.25% | 0.08% |
+| prose | reconstruction | 4.50% | 0.00% | 0.62% | 0.00% | 3.88% | 0.00% |
+| prose | lineage_blocklist | 16.75% | 5.75% | 16.62% | 5.75% | 0.12% | 0.00% |
+| prose | lineage_allowlist | 43.12% | 43.12% | 0.00% | 0.00% | 43.12% | 43.12% |
 
 ## Rehydration (Quimby): blind vs degrade-to-untrusted vs rehydrate
 
@@ -101,6 +135,26 @@ Structural base-axis drift is exactly 0.0000 — the lossless-score invariant, v
 - realized taint recall: 0.602 (configured 0.6)
 - realized taint precision: 0.903 (configured 0.9)
 
+
+## Crossover vs reconstruction penalty (sweep)
+
+Crossover = cadence above which structural_min's reconstruction-coupled
+flip rate drops below the prose strawman's (med profile, mock channel).
+Cycles-in-horizon = steps / crossover cadence.
+
+| penalty p | crossover cadence C* | cycles* = steps/C* | cycles* · p |
+|---|---|---|---|
+| 0.005 | 4.9 | 102.5 | 0.513 |
+| 0.01 | 23.6 | 21.2 | 0.212 |
+| 0.02 | 69.0 | 7.2 | 0.145 |
+| 0.05 | 410.2 | 1.2 | 0.061 |
+| 0.1 | 488.9 | 1.0 | 0.102 |
+
+Fitted relation: **cycles\* ≈ 0.02 · p^-1.59** (log-log fit over 5 uncensored penalties). crossover·p is **NOT constant** over this grid (fitted exponent -1.59 instead of −1) — quote the fitted relation, not a 1/p rule (mean 0.206, relative spread 219%).
+
+Caveat: crossovers near the top of the cadence grid correspond to ≤2 compactions inside the horizon — both arms barely flip there and the interpolated C* is noise-dominated; treat those points as bounds. The scaling is also not expected to be exactly 1/p: the prose arm's flip rate is itself a function of the cycle count it races against.
+
+Figure: `docs/figures/fig_crossover_vs_penalty.png`
 
 ## Figures
 
