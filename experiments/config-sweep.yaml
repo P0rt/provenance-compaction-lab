@@ -1,8 +1,11 @@
-# Fine cadence sweep (med profile only) — locates the prose-vs-structural_min
-# flip-rate crossover per gate class. Mock channel; cheap.
+# Fine cadence × penalty sweep (med profile only) — locates the
+# prose-vs-structural_min flip-rate crossover per gate class and how it moves
+# with the reconstruction penalty. Mock channel; cheap. Run via
+# `uv run prov-lab sweep`.
 steps: 500
+penalty_grid: [0.005, 0.01, 0.02, 0.05, 0.1]
 decision_every: 5
-compaction_cadence: [5, 10, 15, 20, 25, 35, 50, 75, 100]
+compaction_cadence: [2, 3, 5, 10, 15, 20, 25, 35, 50, 75, 100, 150, 250, 500]
 lineage_keep_hops: 5
 allowlist_window: 8
 reconstruction_penalty: 0.02

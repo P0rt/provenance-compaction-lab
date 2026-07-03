@@ -60,6 +60,12 @@ class Policy(ABC):
         self, view: GateView, mode: str = "blind", hop_log: HopLog | None = None
     ) -> GateDecision: ...
 
+    def recon_death_threshold(self) -> float | None:
+        """θ such that the gate blocks permanently once the reconstruction
+        scalar drops below θ, regardless of the other axes. None for gates
+        that never consult reconstruction."""
+        return None
+
 
 class ScoreGate(Policy):
     """proceed iff every thresholded base axis clears its floor.
@@ -98,6 +104,9 @@ class MinFloorGate(Policy):
     ) -> GateDecision:
         return GateDecision(proceed=min(view.effective_scores().values()) >= self.floor)
 
+    def recon_death_threshold(self) -> float | None:
+        return self.floor
+
 
 class DiscountedGate(Policy):
     """proceed iff axis * reconstruction >= threshold — thresholds effectively
@@ -120,6 +129,11 @@ class DiscountedGate(Policy):
             view.scores[axis] * r >= floor for axis, floor in self.thresholds.items()
         )
         return GateDecision(proceed=ok)
+
+    def recon_death_threshold(self) -> float | None:
+        # even a pristine axis (score 1.0) fails once r < its threshold, so
+        # the gate blocks permanently below the largest threshold
+        return max(self.thresholds.values())
 
 
 def _matches(taint: str, prefixes: tuple[str, ...]) -> bool:

@@ -60,6 +60,8 @@ class ExperimentSpec:
     prose_parse_failure_rate: float
     anthropic_model: str
     openai_model: str
+    #: penalty grid for `prov-lab sweep` (defaults to the single configured penalty)
+    penalty_grid: list[float]
 
 
 def load_spec(path: Path) -> ExperimentSpec:
@@ -90,6 +92,10 @@ def load_spec(path: Path) -> ExperimentSpec:
         prose_parse_failure_rate=float(prose.get("parse_failure_rate", 0.0)),
         anthropic_model=str(prose.get("anthropic_model", "claude-haiku-4-5")),
         openai_model=str(prose.get("openai_model", "gpt-5-mini")),
+        penalty_grid=[
+            float(p)
+            for p in raw.get("penalty_grid", [raw["reconstruction_penalty"]])
+        ],
     )
 
 
@@ -187,11 +193,77 @@ def cmd_run(args: argparse.Namespace) -> None:
         "rehydrate": args.rehydrate,
         "seeds": spec.seeds,
         "runs": total_runs,
+        "steps": spec.steps,
+        "reconstruction_penalty": spec.reconstruction_penalty,
+        "recon_gate_thresholds": {
+            p.name: threshold
+            for p in policies
+            if (threshold := p.recon_death_threshold()) is not None
+        },
+        "death_spiral_cadence": spec.death_spiral_cadence,
         "wall_seconds": round(time.monotonic() - t0, 2),
         "decision_log_sha256_last_run": result.decision_log_sha256,
     }
     (out_dir / "run_meta.json").write_text(json.dumps(meta, indent=2))
     print(f"done: {total_runs} runs in {meta['wall_seconds']}s → {out_dir}/")
+
+
+def cmd_sweep(args: argparse.Namespace) -> None:
+    """Cadence × penalty sweep (mock only): the data behind the crossover
+    analytics in the report."""
+    spec = load_spec(Path(args.config))
+    if args.seeds is not None:
+        spec.seeds = args.seeds
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    policies = default_policies(allowlist_window=spec.allowlist_window)
+
+    rows: list[dict[str, Any]] = []
+    cells = [
+        (penalty, cadence, profile_name)
+        for penalty in spec.penalty_grid
+        for cadence in spec.compaction_cadences
+        for profile_name in spec.profiles
+    ]
+    total = len(cells) * spec.seeds
+    done = 0
+    t0 = time.monotonic()
+    for penalty, cadence, profile_name in cells:
+        for seed in range(spec.seeds):
+            key = RunKey("sweep", cadence, profile_name, seed)
+            config = ReplayConfig(
+                seed=seed,
+                steps=spec.steps,
+                decision_every=spec.decision_every,
+                compaction_cadence=cadence,
+                keep_hops=spec.keep_hops,
+                reconstruction_penalty=penalty,
+                profile=spec.profiles[profile_name],
+                rehydrate=False,  # crossover only needs blind-mode flips
+                hop_log_path=None,
+            )
+            result = run_replay(config, policies, _make_channel(spec, "mock", seed))
+            for row in aggregate_gate_metrics(key, result.records):
+                row["penalty"] = penalty
+                rows.append(row)
+            done += 1
+            if done % 100 == 0:
+                print(
+                    f"[{time.monotonic() - t0:6.1f}s] {done}/{total} sweep runs",
+                    flush=True,
+                )
+
+    pd.DataFrame(rows).to_csv(out_dir / "sweep_metrics.csv", index=False)
+    meta = {
+        "config": str(args.config),
+        "steps": spec.steps,
+        "penalty_grid": spec.penalty_grid,
+        "cadences": spec.compaction_cadences,
+        "seeds": spec.seeds,
+        "wall_seconds": round(time.monotonic() - t0, 2),
+    }
+    (out_dir / "sweep_meta.json").write_text(json.dumps(meta, indent=2))
+    print(f"done: {total} sweep runs in {meta['wall_seconds']}s → {out_dir}/")
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -203,7 +275,11 @@ def cmd_report(args: argparse.Namespace) -> None:
         raise SystemExit(f"cannot load report module from {report_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.build_report(Path(args.out))
+    module.build_report(
+        Path(args.out),
+        llm_dir=Path(args.llm_out),
+        sweep_dir=Path(args.sweep_out),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -231,8 +307,25 @@ def main(argv: list[str] | None = None) -> None:
     p_run.add_argument("--out", default="results")
     p_run.set_defaults(func=cmd_run)
 
+    p_sweep = sub.add_parser(
+        "sweep", help="cadence × penalty sweep (mock) for the crossover analytics"
+    )
+    p_sweep.add_argument("--config", default="experiments/config-sweep.yaml")
+    p_sweep.add_argument("--seeds", type=int, default=None)
+    p_sweep.add_argument("--out", default="results-sweep")
+    p_sweep.set_defaults(func=cmd_sweep)
+
     p_report = sub.add_parser("report", help="build results/summary.md + figures")
     p_report.add_argument("--out", default="results")
+    p_report.add_argument(
+        "--llm-out", default="results-llm",
+        help="real-LLM results dir for the matched-slice comparison "
+        "(falls back to docs/data/llm_gate_metrics.csv)",
+    )
+    p_report.add_argument(
+        "--sweep-out", default="results-sweep",
+        help="sweep results dir for the crossover-vs-penalty analytics",
+    )
     p_report.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)

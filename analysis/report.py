@@ -1,12 +1,17 @@
 """Build results/summary.md + figures from the aggregate CSVs.
 
 Reads:  results/gate_metrics.csv, drift.csv, recon_curve.csv,
-        prose_channel.csv, death_spiral_decisions.csv
-Writes: results/summary.md, results/fig_*.png
+        prose_channel.csv, death_spiral_decisions.csv, run_meta.json
+        plus, when present: a real-LLM results dir (matched-slice comparison;
+        falls back to docs/data/llm_gate_metrics.csv) and a sweep results dir
+        (crossover-vs-penalty analytics).
+Writes: results/summary.md, results/fig_*.png,
+        docs/figures/fig_crossover_vs_penalty.png (sweep only)
 """
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -16,6 +21,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FROZEN_LLM_GATE_METRICS = REPO_ROOT / "docs" / "data" / "llm_gate_metrics.csv"
 
 ARMS = ("structural_min", "structural_perhop", "prose")
 GATE_CLASSES = ("score", "reconstruction", "lineage_blocklist", "lineage_allowlist")
@@ -53,7 +61,11 @@ def _pct(x: float) -> str:
     return f"{100 * x:.2f}%"
 
 
-def build_report(results_dir: Path) -> None:
+def build_report(
+    results_dir: Path,
+    llm_dir: Path | None = None,
+    sweep_dir: Path | None = None,
+) -> None:
     gates = pd.read_csv(results_dir / "gate_metrics.csv")
     drift = pd.read_csv(results_dir / "drift.csv")
     curve = pd.read_csv(results_dir / "recon_curve.csv")
@@ -197,6 +209,8 @@ def build_report(results_dir: Path) -> None:
             "arms by construction) and catastrophically worse on allowlist gates.\n"
         )
 
+    lines.extend(_analytic_death_lines(results_dir, death, death_cadence))
+
     add("\n## Per-config results (blind mode, rates vs oracle)\n")
     add("| cadence | profile | arm | agreement | false-proceed | false-stop |")
     add("|---|---|---|---|---|---|")
@@ -212,6 +226,8 @@ def build_report(results_dir: Path) -> None:
                 add(
                     f"| {cadence} | {profile} | {arm} | {_pct(agree)} | {_pct(fp)} | {_pct(fs)} |"
                 )
+
+    lines.extend(_matched_slice_lines(blind, llm_dir))
 
     add("\n## Rehydration (Quimby): blind vs degrade-to-untrusted vs rehydrate\n")
     add("Structural arms, per lineage gate, main matrix. Rehydrate fetches folded hops")
@@ -258,6 +274,8 @@ def build_report(results_dir: Path) -> None:
     add(f"- realized taint recall: {recall:.3f} (configured 0.6)")
     add(f"- realized taint precision: {precision:.3f} (configured 0.9)\n")
 
+    lines.extend(_crossover_lines(sweep_dir))
+
     add("\n## Figures\n")
     add(f"- `{fig_decay.name}` — reconstruction decay: min-folded vs per-hop fidelity (death-spiral run)")
     add(f"- `{fig_agree.name}` — gate agreement with the oracle, by gate class and arm")
@@ -272,7 +290,10 @@ def _verdict(ok: bool) -> str:
 
 
 def _death_cycle(
-    death: pd.DataFrame, cadence: int, arm: str = "structural_min"
+    death: pd.DataFrame,
+    cadence: int,
+    arm: str = "structural_min",
+    policy: str | None = None,
 ) -> int | None:
     """Smallest compaction-cycle count after which the arm blocks every
     reconstruction-coupled decision the oracle would have allowed, permanently.
@@ -280,6 +301,8 @@ def _death_cycle(
     Conditioning on oracle-proceed decisions separates "the arm's memory died"
     from "the trajectory itself warranted a block"."""
     rows = death[(death["arm"] == arm) & death["oracle_proceed"]].copy()
+    if policy is not None:
+        rows = rows[rows["policy"] == policy]
     if rows.empty:
         return None
     rows["cycle"] = rows["step"] // cadence
@@ -291,6 +314,265 @@ def _death_cycle(
     if last_proceed >= max_cycle:
         return None  # still proceeding at the end of the run: never died
     return last_proceed + 1
+
+
+def _analytic_death_lines(
+    results_dir: Path, death: pd.DataFrame, death_cadence: int
+) -> list[str]:
+    """Closed-form death cycle n = ln(θ) / ln(1 − p) per reconstruction-coupled
+    gate, next to the empirical cycle from the death-spiral run."""
+    meta_path = results_dir / "run_meta.json"
+    if not meta_path.exists():
+        return []
+    meta = json.loads(meta_path.read_text())
+    penalty = float(meta.get("reconstruction_penalty", 0.0))
+    thresholds: dict[str, float] = {
+        str(k): float(v) for k, v in meta.get("recon_gate_thresholds", {}).items()
+    }
+    if penalty <= 0.0 or not thresholds:
+        return []
+    lines = [
+        f"\n## Reconstruction death-cycle analytics (penalty p = {penalty})\n",
+        "Closed form: memory dies for a gate with permanent-block threshold θ at",
+        "n = ln(θ) / ln(1 − p) compaction cycles. Empirical column is the first",
+        "cycle after which the gate blocks every oracle-allowed decision in the",
+        "death-spiral run (— when the run's horizon was too short to reach it).\n",
+        "| gate | θ | analytic n | first whole cycle | empirical (death-spiral) |",
+        "|---|---|---|---|---|",
+    ]
+    for gate in sorted(thresholds):
+        theta = thresholds[gate]
+        n_real = math.log(theta) / math.log(1.0 - penalty)
+        first_whole = math.floor(n_real) + 1
+        empirical = _death_cycle(death, death_cadence, policy=gate)
+        lines.append(
+            f"| {gate} | {theta:.2f} | {n_real:.1f} | {first_whole} | "
+            f"{empirical if empirical is not None else '—'} |"
+        )
+    return lines
+
+
+def _matched_slice_lines(blind_mock: pd.DataFrame, llm_dir: Path | None) -> list[str]:
+    """Side-by-side mock vs real-LLM comparison on identical
+    (cadence, profile, seed) cells — never silently mixed slices."""
+    header = ["\n## Matched-slice comparison: mock vs real-LLM prose channel\n"]
+    llm_path: Path | None = None
+    candidates = []
+    if llm_dir is not None:
+        candidates.append(llm_dir / "gate_metrics.csv")
+    candidates.append(FROZEN_LLM_GATE_METRICS)
+    for candidate in candidates:
+        if candidate.exists():
+            llm_path = candidate
+            break
+    if llm_path is None:
+        return header + [
+            "_Skipped: no real-LLM results found (looked for a results-llm dir "
+            "and the frozen copy under docs/data/)._\n"
+        ]
+    llm = pd.read_csv(llm_path)
+    llm_blind = llm[(llm["run_type"] == "main") & (llm["mode"] == "blind")]
+
+    def cells_of(df: pd.DataFrame) -> set[tuple[int, str, int]]:
+        unique = df[["cadence", "profile", "seed"]].drop_duplicates()
+        return {
+            (int(str(c)), str(p), int(str(s)))
+            for c, p, s in zip(unique["cadence"], unique["profile"], unique["seed"])
+        }
+
+    common = sorted(cells_of(blind_mock) & cells_of(llm_blind))
+    if not common:
+        return header + [
+            "_Skipped: the mock results and the real-LLM results share no "
+            "(cadence, profile, seed) cells; run "
+            "`prov-lab run --config experiments/config.matched.yaml --mock` "
+            "to produce the matched mock slice._\n"
+        ]
+    cells_df = pd.DataFrame(common, columns=["cadence", "profile", "seed"])
+    mock_m = blind_mock.merge(cells_df, on=["cadence", "profile", "seed"])
+    llm_m = llm_blind.merge(cells_df, on=["cadence", "profile", "seed"])
+    cell_desc = (
+        f"C ∈ {{{', '.join(str(c) for c in sorted({c for c, _, _ in common}))}}}, "
+        f"profiles {{{', '.join(sorted({p for _, p, _ in common}))}}}, "
+        f"seeds {{{', '.join(str(s) for s in sorted({s for _, _, s in common}))}}}"
+    )
+    lines = header + [
+        f"Computed on the **identical cells only** ({cell_desc} — the "
+        f"intersection of both result sets; source: `{llm_path}`). The mock "
+        "channel uses the configured noise parameters; the real column is the "
+        "measured gpt-5-mini summarize→extract round trip.\n",
+        "| arm | gate class | mock flip | real flip | mock fp | real fp | mock fs | real fs |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in ARMS:
+        for gate_class in ("(all)",) + GATE_CLASSES:
+            mock_sel = mock_m[mock_m["arm"] == arm]
+            llm_sel = llm_m[llm_m["arm"] == arm]
+            if gate_class != "(all)":
+                mock_sel = mock_sel[mock_sel["gate_class"] == gate_class]
+                llm_sel = llm_sel[llm_sel["gate_class"] == gate_class]
+            _, m_fp, m_fs = _rates(mock_sel)
+            _, l_fp, l_fs = _rates(llm_sel)
+            lines.append(
+                f"| {arm} | {gate_class} | {_pct(_flip(mock_sel))} | "
+                f"{_pct(_flip(llm_sel))} | {_pct(m_fp)} | {_pct(l_fp)} | "
+                f"{_pct(m_fs)} | {_pct(l_fs)} |"
+            )
+    return lines
+
+
+def _crossover_lines(sweep_dir: Path | None) -> list[str]:
+    """Crossover cadence (structural_min vs prose, reconstruction-coupled
+    gates) as a function of the reconstruction penalty, plus the ~1/p scaling
+    check. Emits docs/figures/fig_crossover_vs_penalty.png."""
+    if sweep_dir is None:
+        return []
+    path = sweep_dir / "sweep_metrics.csv"
+    if not path.exists():
+        return []
+    df = pd.read_csv(path)
+    meta_path = sweep_dir / "sweep_meta.json"
+    steps = 500
+    if meta_path.exists():
+        steps = int(json.loads(meta_path.read_text()).get("steps", 500))
+    recon = df[(df["gate_class"] == "reconstruction") & (df["mode"] == "blind")]
+
+    def flip_at(arm: str, penalty: float, cadence: int) -> float:
+        sel = recon[
+            (recon["arm"] == arm)
+            & (recon["penalty"] == penalty)
+            & (recon["cadence"] == cadence)
+        ]
+        return _flip(sel)
+
+    penalties = sorted(recon["penalty"].unique())
+    cadences = sorted(int(c) for c in recon["cadence"].unique())
+    crossovers: dict[float, float | None] = {}
+    censored: dict[float, str] = {}
+    for penalty in penalties:
+        deltas = [
+            flip_at("structural_min", penalty, c) - flip_at("prose", penalty, c)
+            for c in cadences
+        ]
+        if deltas[0] <= 0:
+            crossovers[penalty] = None
+            censored[penalty] = f"< {cadences[0]}"
+            continue
+        crossover: float | None = None
+        for i in range(len(cadences) - 1):
+            if deltas[i] > 0 >= deltas[i + 1]:
+                # interpolate in log-cadence between the sign change
+                lo, hi = math.log10(cadences[i]), math.log10(cadences[i + 1])
+                frac = deltas[i] / (deltas[i] - deltas[i + 1])
+                crossover = 10 ** (lo + frac * (hi - lo))
+                break
+        crossovers[penalty] = crossover
+        if crossover is None:
+            censored[penalty] = f"> {cadences[-1]}"
+
+    lines = [
+        "\n## Crossover vs reconstruction penalty (sweep)\n",
+        "Crossover = cadence above which structural_min's reconstruction-coupled",
+        "flip rate drops below the prose strawman's (med profile, mock channel).",
+        "Cycles-in-horizon = steps / crossover cadence.\n",
+        "| penalty p | crossover cadence C* | cycles* = steps/C* | cycles* · p |",
+        "|---|---|---|---|",
+    ]
+    fit_p: list[float] = []
+    fit_cycles: list[float] = []
+    for penalty in penalties:
+        crossover = crossovers[penalty]
+        if crossover is None:
+            lines.append(f"| {penalty} | {censored[penalty]} (censored) | — | — |")
+            continue
+        cycles = steps / crossover
+        fit_p.append(penalty)
+        fit_cycles.append(cycles)
+        lines.append(
+            f"| {penalty} | {crossover:.1f} | {cycles:.1f} | {cycles * penalty:.3f} |"
+        )
+    if len(fit_cycles) >= 2:
+        import numpy as np
+
+        slope, intercept = np.polyfit(
+            np.log(np.asarray(fit_p)), np.log(np.asarray(fit_cycles)), 1
+        )
+        k = math.exp(float(intercept))
+        products = [c * p for c, p in zip(fit_cycles, fit_p)]
+        mean_prod = sum(products) / len(products)
+        spread = (
+            (max(products) - min(products)) / mean_prod if mean_prod else float("inf")
+        )
+        if abs(slope + 1.0) < 0.3:
+            verdict = (
+                "**roughly constant** — consistent with the ~1/p scaling of the "
+                "analytic death cycle n ≈ −ln(θ)/p"
+            )
+        else:
+            verdict = (
+                f"**NOT constant** over this grid (fitted exponent {slope:.2f} "
+                "instead of −1) — quote the fitted relation, not a 1/p rule"
+            )
+        lines.append(
+            f"\nFitted relation: **cycles\\* ≈ {k:.2f} · p^{slope:.2f}** "
+            f"(log-log fit over {len(fit_cycles)} uncensored penalties). "
+            f"crossover·p is {verdict} (mean {mean_prod:.3f}, relative spread "
+            f"{spread:.0%})."
+        )
+    lines.append(
+        "\nCaveat: crossovers near the top of the cadence grid correspond to "
+        "≤2 compactions inside the horizon — both arms barely flip there and "
+        "the interpolated C* is noise-dominated; treat those points as bounds. "
+        "The scaling is also not expected to be exactly 1/p: the prose arm's "
+        "flip rate is itself a function of the cycle count it races against."
+    )
+    fig_path = REPO_ROOT / "docs" / "figures" / "fig_crossover_vs_penalty.png"
+    _fig_crossover_vs_penalty(crossovers, censored, steps, fig_path)
+    lines.append(f"\nFigure: `{fig_path.relative_to(REPO_ROOT)}`")
+    return lines
+
+
+def _fig_crossover_vs_penalty(
+    crossovers: dict[float, float | None],
+    censored: dict[float, str],
+    steps: int,
+    path: Path,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    xs = [p for p, c in sorted(crossovers.items()) if c is not None]
+    ys = [c for _, c in sorted(crossovers.items()) if c is not None]
+    ax.plot(xs, ys, marker="o", markersize=7, linewidth=2, color="#2a78d6")
+    for x, y in zip(xs, ys):
+        ax.annotate(
+            f"{steps / y:.0f} cycles",
+            (x, y),
+            textcoords="offset points",
+            xytext=(8, -4),
+            fontsize=8,
+            color=GRAY,
+        )
+    for p, label in censored.items():
+        ax.annotate(
+            f"p={p}: {label}",
+            xy=(0.02, 0.05 + 0.07 * list(censored).index(p)),
+            xycoords="axes fraction",
+            fontsize=8,
+            color=GRAY,
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("reconstruction penalty p (per compaction)")
+    ax.set_ylabel("crossover cadence C*")
+    ax.set_title(
+        "Where min-folding starts losing to the prose strawman\n"
+        "(reconstruction-coupled gates, med profile)"
+    )
+    ax.grid(alpha=0.25, which="both")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
 
 
 def _fig_reconstruction_decay(

@@ -1,0 +1,22 @@
+# Matched slice: the exact cells of the real-LLM run (see docs/summary-llm-frozen.md)
+# so mock and real channels can be compared on identical (cadence, profile, seed)
+# cells. C ∈ {10, 25}, med profile only, seeds pinned to {0, 1}.
+steps: 500
+decision_every: 5
+compaction_cadence: [10, 25]
+lineage_keep_hops: 5
+allowlist_window: 8
+reconstruction_penalty: 0.02
+degradation_profiles:
+  med:  {p_unverified: 0.15, p_fallback: 0.15, p_flaky: 0.08, p_stale: 0.25}
+seeds: 2                              # seeds 0 and 1 — the real-LLM run's seeds
+death_spiral_run:
+  steps: 500                          # mirrors the real-LLM config's shortened run
+  compaction_cadence: 25
+prose:
+  sigma: 0.08
+  taint_recall: 0.6
+  taint_precision: 0.9
+  parse_failure_rate: 0.0
+  anthropic_model: claude-haiku-4-5
+  openai_model: gpt-5-mini
