@@ -145,6 +145,22 @@ uv run prov-lab report [--out results]
 `--rehydrate` (default on) additionally evaluates lineage gates in rehydrate
 mode against the cold-storage hop log, counting lookups and bytes read.
 
+## Run it on your own traces
+
+The synthetic generator is swappable: `--trace` replays a real agent log
+through the same four arms and nine gates, with taint derivation defined as
+data (YAML rules mapping observable fields to taints), and a coverage block
+in the report showing exactly what was mapped, skipped, and derived:
+
+```sh
+uv run prov-lab run --trace examples/traces/sample.jsonl --mock --out results-trace
+uv run prov-lab report --out results-trace
+```
+
+The generic JSONL schema (the contract for your logs), the rule format, and
+a mapping recipe for Claude Code session transcripts are documented in
+[`docs/trace-adapters.md`](docs/trace-adapters.md).
+
 ## Audit your pipeline in five minutes
 
 You don't need to adopt this repo's provenance scheme to get value from the

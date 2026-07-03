@@ -1,0 +1,28 @@
+# Taint-derivation rules: map observable trace fields to taints (and the
+# axis hit that comes with them). Data, not code — edit for your own logs.
+# Condition operators: equals | not_equals | gt | lt | always.
+# The first matching rule wins for a record.
+rules:
+  - taint: unverified_web
+    op: SOURCE_FETCH
+    when: {field: origin, equals: unauthenticated_web}
+    axis: verification
+    factor: 0.45
+
+  - taint: stale_cache
+    op: CACHE_READ
+    when: {field: age_seconds, gt: 3600}
+    axis: freshness
+    factor: 0.70
+
+  - taint: fallback_model
+    op: LLM_TRANSFORM
+    when: {field: model_tier, equals: fallback}
+    axis: capability
+    factor: 0.65
+
+  - taint: tool_flaky
+    op: TOOL_CALL
+    when: {field: status, not_equals: ok}
+    axis: tool_integrity
+    factor: 0.65

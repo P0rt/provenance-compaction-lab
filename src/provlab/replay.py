@@ -98,6 +98,16 @@ def _hop_for_event(event: Event, tips: dict[int, str]) -> Hop | None:
     """Build the (arm-independent) lineage hop for one trajectory event."""
     if isinstance(event, NewValue):
         step = event.step
+        if event.axis is not None or event.taint is not None:
+            # trace mode: rule-derived degradation attached to the fetch
+            return Hop(
+                hop_id=f"h{step:06d}",
+                step=step,
+                op="SOURCE_FETCH",
+                axis_deltas={event.axis: event.factor} if event.axis else {},
+                taints_added=frozenset({event.taint} if event.taint else set()),
+                parent_hop_ids=(),
+            )
         return Hop(
             hop_id=f"h{step:06d}",
             step=step,
@@ -130,14 +140,21 @@ def _hop_for_event(event: Event, tips: dict[int, str]) -> Hop | None:
 
 
 def run_replay(
-    config: ReplayConfig, policies: tuple[Policy, ...], channel: ProseChannel
+    config: ReplayConfig,
+    policies: tuple[Policy, ...],
+    channel: ProseChannel,
+    events: list[Event] | None = None,
 ) -> ReplayResult:
-    events = generate_trajectory(
-        seed=config.seed,
-        steps=config.steps,
-        decision_every=config.decision_every,
-        profile=config.profile,
-    )
+    """Run all arms over one trajectory. ``events`` overrides the synthetic
+    generator (trace mode — see provlab.trace); otherwise the trajectory is
+    generated from the config's seed."""
+    if events is None:
+        events = generate_trajectory(
+            seed=config.seed,
+            steps=config.steps,
+            decision_every=config.decision_every,
+            profile=config.profile,
+        )
     hop_log = HopLog(config.hop_log_path)
     ground_truth, structural_min, structural_perhop, prose = make_arms(
         config.keep_hops, config.reconstruction_penalty, channel

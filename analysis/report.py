@@ -75,19 +75,38 @@ def build_report(
 
     main = gates[gates["run_type"] == "main"]
     blind = main[main["mode"] == "blind"]
-    death_cadence = int(gates[gates["run_type"] == "death_spiral"]["cadence"].iloc[0])
+    death_rows = gates[gates["run_type"] == "death_spiral"]
+    death_cadence: int | None = (
+        int(death_rows["cadence"].iloc[0]) if len(death_rows) else None
+    )
+    profiles_present = _ordered_profiles(blind)
 
     # ---- headline numbers --------------------------------------------------
+    h1_cadence, h1_profile = 25, "med"
     h1_slice = blind[
         (blind["arm"] == "structural_min")
         & blind["irreversible"]
-        & (blind["cadence"] == 25)
-        & (blind["profile"] == "med")
+        & (blind["cadence"] == h1_cadence)
+        & (blind["profile"] == h1_profile)
     ]
+    if h1_slice.empty:  # e.g. trace mode: fall back to the first available cell
+        h1_cadence = int(sorted(blind["cadence"].unique())[0])
+        h1_profile = profiles_present[0]
+        h1_slice = blind[
+            (blind["arm"] == "structural_min")
+            & blind["irreversible"]
+            & (blind["cadence"] == h1_cadence)
+            & (blind["profile"] == h1_profile)
+        ]
     _, headline_fp, _ = _rates(h1_slice)
 
-    death_cycle = _death_cycle(death, death_cadence)
-    perhop_dies = _death_cycle(death, death_cadence, arm="structural_perhop") is not None
+    death_cycle = (
+        _death_cycle(death, death_cadence) if death_cadence is not None else None
+    )
+    perhop_dies = (
+        death_cadence is not None
+        and _death_cycle(death, death_cadence, arm="structural_perhop") is not None
+    )
 
     prose_flip = _flip(blind[blind["arm"] == "prose"])
     min_flip = _flip(blind[blind["arm"] == "structural_min"])
@@ -111,6 +130,9 @@ def build_report(
     recon_vals = list(ds_curve["recon_min"])
     monotone = all(a >= b for a, b in zip(recon_vals, recon_vals[1:]))
     h2_pass = monotone and death_cycle is not None and not perhop_dies
+    h2_verdict = (
+        _verdict(h2_pass) if death_cadence is not None else "n/a (no death-spiral run)"
+    )
 
     sm_blind = blind[blind["arm"] == "structural_min"]
     _, bl_fp, bl_fs = _rates(sm_blind[sm_blind["gate_class"] == "lineage_blocklist"])
@@ -126,24 +148,34 @@ def build_report(
     h4_pass = all(row[4] for row in h4_rows)
 
     # ---- figures -------------------------------------------------------------
-    fig_decay = results_dir / "fig_reconstruction_decay.png"
-    _fig_reconstruction_decay(ds_curve, death_cadence, death_cycle, fig_decay)
+    fig_decay: Path | None = None
+    if death_cadence is not None and not ds_curve.empty:
+        fig_decay = results_dir / "fig_reconstruction_decay.png"
+        _fig_reconstruction_decay(ds_curve, death_cadence, death_cycle, fig_decay)
     fig_agree = results_dir / "fig_gate_agreement_by_class.png"
     _fig_agreement_by_class(blind, fig_agree)
     fig_fp = results_dir / "fig_false_proceed_vs_cadence.png"
-    _fig_false_proceed_vs_cadence(blind, fig_fp)
+    _fig_false_proceed_vs_cadence(blind, profiles_present, fig_fp)
 
     # ---- summary.md ----------------------------------------------------------
     lines: list[str] = []
     add = lines.append
     add("# Provenance under compaction — experiment summary\n")
+    lines.extend(_trace_coverage_lines(results_dir))
     add("## HEADLINE NUMBERS\n")
     add(
-        f"1. **False-proceed rate on irreversible gates** (`structural_min`, C=25, med profile): "
+        f"1. **False-proceed rate on irreversible gates** (`structural_min`, "
+        f"C={h1_cadence}, {h1_profile} profile): "
         f"**{_pct(headline_fp)}** of irreversible-action decisions proceeded when the "
         f"uncompacted oracle said block.\n"
     )
-    if death_cycle is not None:
+    if death_cadence is None:
+        add(
+            "2. **No death-spiral run in this results set** (trace mode runs "
+            "only the trace itself) — see the default config for the "
+            "long-horizon reconstruction-decay measurement.\n"
+        )
+    elif death_cycle is not None:
         add(
             f"2. **structural_min memory dies at compaction cycle ≈ {death_cycle}** "
             f"(death-spiral run, C={death_cadence}): from that cycle on, every "
@@ -181,7 +213,7 @@ def build_report(
     add(
         f"| **H2 (death spiral)** — min-folded reconstruction decays monotonically and "
         f"eventually blocks ALL reconstruction-coupled gates permanently; perhop does not | "
-        f"{_verdict(h2_pass)} | monotone: {monotone}; death cycle: {death_cycle}; "
+        f"{h2_verdict} | monotone: {monotone}; death cycle: {death_cycle}; "
         f"perhop dies: {perhop_dies} |"
     )
     add(
@@ -216,7 +248,7 @@ def build_report(
     add("| cadence | profile | arm | agreement | false-proceed | false-stop |")
     add("|---|---|---|---|---|---|")
     for cadence in sorted(blind["cadence"].unique()):
-        for profile in ("low", "med", "high"):
+        for profile in profiles_present:
             for arm in ARMS:
                 cell = blind[
                     (blind["cadence"] == cadence)
@@ -278,16 +310,51 @@ def build_report(
     lines.extend(_crossover_lines(sweep_dir))
 
     add("\n## Figures\n")
-    add(f"- `{fig_decay.name}` — reconstruction decay: min-folded vs per-hop fidelity (death-spiral run)")
+    n_figures = 2
+    if fig_decay is not None:
+        n_figures += 1
+        add(
+            f"- `{fig_decay.name}` — reconstruction decay: min-folded vs per-hop "
+            f"fidelity (death-spiral run)"
+        )
     add(f"- `{fig_agree.name}` — gate agreement with the oracle, by gate class and arm")
     add(f"- `{fig_fp.name}` — false-proceed rate on irreversible gates vs compaction cadence\n")
 
     (results_dir / "summary.md").write_text("\n".join(lines))
-    print(f"wrote {results_dir / 'summary.md'} and 3 figures")
+    print(f"wrote {results_dir / 'summary.md'} and {n_figures} figures")
 
 
 def _verdict(ok: bool) -> str:
     return "**PASS**" if ok else "**FAIL**"
+
+
+def _ordered_profiles(blind: pd.DataFrame) -> list[str]:
+    present = list(dict.fromkeys(str(p) for p in blind["profile"]))
+    known = [p for p in ("low", "med", "high") if p in present]
+    return known + sorted(p for p in present if p not in ("low", "med", "high"))
+
+
+def _trace_coverage_lines(results_dir: Path) -> list[str]:
+    """Trace mode: which trace records were mapped, which were skipped, and
+    which derivation rule fired how often."""
+    path = results_dir / "trace_coverage.json"
+    if not path.exists():
+        return []
+    cov = json.loads(path.read_text())
+    lines = [
+        "\n## Trace coverage\n",
+        f"- records in trace: {cov['n_records']}",
+        f"- mapped to replay steps: {cov['n_mapped']}",
+        f"- skipped: {cov['n_skipped']}",
+    ]
+    for reason, count in cov.get("skipped_by_reason", {}).items():
+        lines.append(f"    - {reason}: {count}")
+    for reason, count in cov.get("warnings", {}).items():
+        lines.append(f"- warning — {reason}: {count}")
+    lines.append("- taints derived per rule:")
+    for label, hits in cov.get("rule_hits", {}).items():
+        lines.append(f"    - {label}: {hits}")
+    return lines
 
 
 def _death_cycle(
@@ -318,7 +385,7 @@ def _death_cycle(
 
 
 def _analytic_death_lines(
-    results_dir: Path, death: pd.DataFrame, death_cadence: int
+    results_dir: Path, death: pd.DataFrame, death_cadence: int | None
 ) -> list[str]:
     """Closed-form death cycle n = ln(θ) / ln(1 − p) per reconstruction-coupled
     gate, next to the empirical cycle from the death-spiral run."""
@@ -345,7 +412,11 @@ def _analytic_death_lines(
         theta = thresholds[gate]
         n_real = math.log(theta) / math.log(1.0 - penalty)
         first_whole = math.floor(n_real) + 1
-        empirical = _death_cycle(death, death_cadence, policy=gate)
+        empirical = (
+            _death_cycle(death, death_cadence, policy=gate)
+            if death_cadence is not None
+            else None
+        )
         lines.append(
             f"| {gate} | {theta:.2f} | {n_real:.1f} | {first_whole} | "
             f"{empirical if empirical is not None else '—'} |"
@@ -666,24 +737,27 @@ def _fig_agreement_by_class(blind: pd.DataFrame, path: Path) -> None:
     plt.close(fig)
 
 
-def _fig_false_proceed_vs_cadence(blind: pd.DataFrame, path: Path) -> None:
+def _fig_false_proceed_vs_cadence(
+    blind: pd.DataFrame, profiles: list[str], path: Path
+) -> None:
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
     irr = blind[blind["irreversible"] & (blind["arm"] == "structural_min")]
     cadences = sorted(irr["cadence"].unique())
-    for profile in ("low", "med", "high"):
+    for profile in profiles:
         ys = []
         for cadence in cadences:
             _, fp, _ = _rates(
                 irr[(irr["cadence"] == cadence) & (irr["profile"] == profile)]
             )
             ys.append(100 * fp)
+        color = PROFILE_COLOR.get(profile, "#2a78d6")
         ax.plot(
             cadences, ys, marker="o", markersize=6, linewidth=2,
-            color=PROFILE_COLOR[profile], label=f"{profile} profile",
+            color=color, label=f"{profile} profile",
         )
         ax.text(
             cadences[-1] + 1, ys[-1], profile,
-            fontsize=9, color=PROFILE_COLOR[profile], va="center",
+            fontsize=9, color=color, va="center",
         )
     ax.set_xlabel("compaction cadence C (steps between compactions)")
     ax.set_ylabel("false-proceed rate on irreversible gates (%)")

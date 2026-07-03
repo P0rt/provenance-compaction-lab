@@ -1,0 +1,60 @@
+{"step": "s001", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:00:00Z", "fields": {"origin": "internal_db"}}
+{"step": "s002", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:01:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s003", "op": "TOOL_CALL", "ts": "2026-07-01T10:02:00Z", "fields": {"status": "ok", "tool": "search"}}
+{"step": "s004", "op": "CACHE_READ", "ts": "2026-07-01T10:03:00Z", "fields": {"age_seconds": 120}}
+{"step": "s005", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:04:00Z", "fields": {"origin": "unauthenticated_web", "url": "http://blog.example"}}
+{"step": "s006", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:05:00Z", "fields": {"model_tier": "fallback", "reason": "rate_limited"}}
+{"step": "s007", "op": "TOOL_CALL", "ts": "2026-07-01T10:06:00Z", "fields": {"status": "timeout", "tool": "browser"}}
+{"step": "s008", "op": "CACHE_READ", "ts": "2026-07-01T10:07:00Z", "fields": {"age_seconds": 7200}}
+{"step": "s009", "op": "MERGE", "ts": "2026-07-01T10:08:00Z", "merge_with": ["s001"]}
+{"step": "s010", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:09:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s011", "op": "HUMAN_REVIEW", "ts": "2026-07-01T10:10:00Z", "fields": {"reviewer": "sergei"}}
+{"step": "s012", "op": "TOOL_CALL", "ts": "2026-07-01T10:11:00Z", "fields": {"status": "ok", "tool": "calculator"}}
+{"step": "s013", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:12:00Z", "fields": {"origin": "verified_api"}}
+{"step": "s014", "op": "CACHE_READ", "ts": "2026-07-01T10:13:00Z", "fields": {"age_seconds": 30}}
+{"step": "s015", "op": "TOOL_CALL", "ts": "2026-07-01T10:14:00Z", "fields": {"status": "error", "tool": "payments_api"}}
+{"step": "s016", "op": "MERGE", "ts": "2026-07-01T10:15:00Z"}
+{"step": "s017", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:16:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s018", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:17:00Z", "fields": {"origin": "unauthenticated_web"}}
+{"step": "s019", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:18:00Z", "fields": {"model_tier": "fallback"}}
+{"step": "s020", "op": "CACHE_READ", "ts": "2026-07-01T10:19:00Z", "fields": {"age_seconds": 5400}}
+{"step": "s021", "op": "TOOL_CALL", "ts": "2026-07-01T10:20:00Z", "fields": {"status": "ok"}}
+{"step": "s022", "op": "MERGE", "ts": "2026-07-01T10:21:00Z", "merge_with": ["s013", "s018"]}
+{"step": "s023", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:22:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s024", "op": "TOOL_CALL", "ts": "2026-07-01T10:23:00Z", "fields": {"status": "flaky", "tool": "search"}}
+{"step": "s025", "op": "CACHE_READ", "ts": "2026-07-01T10:24:00Z", "fields": {"age_seconds": 60}}
+{"step": "s026", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:25:00Z", "fields": {"origin": "internal_db"}}
+{"step": "s027", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:26:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s028", "op": "MERGE", "ts": "2026-07-01T10:27:00Z", "merge_with": ["s999"]}
+{"step": "s029", "op": "TOOL_CALL", "ts": "2026-07-01T10:28:00Z", "fields": {"status": "ok"}}
+{"step": "s030", "op": "CACHE_READ", "ts": "2026-07-01T10:29:00Z", "fields": {"age_seconds": 9000}}
+{"step": "s031", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:30:00Z", "fields": {"origin": "unauthenticated_web"}}
+{"step": "s032", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:31:00Z", "fields": {"model_tier": "fallback"}}
+{"step": "s033", "op": "TOOL_CALL", "ts": "2026-07-01T10:32:00Z", "fields": {"status": "error"}}
+{"step": "s034", "op": "MERGE", "ts": "2026-07-01T10:33:00Z"}
+{"step": "s035", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:34:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s036", "op": "CACHE_READ", "ts": "2026-07-01T10:35:00Z", "fields": {"age_seconds": 45}}
+{"step": "s037", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:36:00Z", "fields": {"origin": "verified_api"}}
+{"step": "s038", "op": "TOOL_CALL", "ts": "2026-07-01T10:37:00Z", "fields": {"status": "ok"}}
+{"step": "s039", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:38:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s040", "op": "CACHE_READ", "ts": "2026-07-01T10:39:00Z", "fields": {"age_seconds": 4000}}
+{"step": "s041", "op": "MERGE", "ts": "2026-07-01T10:40:00Z", "merge_with": ["s037"]}
+{"step": "s042", "op": "TOOL_CALL", "ts": "2026-07-01T10:41:00Z", "fields": {"status": "ok"}}
+{"step": "s043", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:42:00Z", "fields": {"origin": "internal_db"}}
+{"step": "s044", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:43:00Z", "fields": {"model_tier": "fallback"}}
+{"step": "s045", "op": "TOOL_CALL", "ts": "2026-07-01T10:44:00Z", "fields": {"status": "timeout"}}
+{"step": "s046", "op": "CACHE_READ", "ts": "2026-07-01T10:45:00Z", "fields": {"age_seconds": 10}}
+{"step": "s047", "op": "MERGE", "ts": "2026-07-01T10:46:00Z"}
+{"step": "s048", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:47:00Z", "fields": {"origin": "unauthenticated_web"}}
+{"step": "s049", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:48:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s050", "op": "TOOL_CALL", "ts": "2026-07-01T10:49:00Z", "fields": {"status": "ok"}}
+{"step": "s051", "op": "CACHE_READ", "ts": "2026-07-01T10:50:00Z", "fields": {"age_seconds": 86400}}
+{"step": "s052", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:51:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s053", "op": "MERGE", "ts": "2026-07-01T10:52:00Z", "merge_with": ["s043", "s048"]}
+{"step": "s054", "op": "TOOL_CALL", "ts": "2026-07-01T10:53:00Z", "fields": {"status": "ok"}}
+{"step": "s055", "op": "SOURCE_FETCH", "ts": "2026-07-01T10:54:00Z", "fields": {"origin": "verified_api"}}
+{"step": "s056", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:55:00Z", "fields": {"model_tier": "primary"}}
+{"step": "s057", "op": "TOOL_CALL", "ts": "2026-07-01T10:56:00Z", "fields": {"status": "error", "tool": "browser"}}
+{"step": "s058", "op": "CACHE_READ", "ts": "2026-07-01T10:57:00Z", "fields": {"age_seconds": 200}}
+{"step": "s059", "op": "MERGE", "ts": "2026-07-01T10:58:00Z"}
+{"step": "s060", "op": "LLM_TRANSFORM", "ts": "2026-07-01T10:59:00Z", "fields": {"model_tier": "primary"}}

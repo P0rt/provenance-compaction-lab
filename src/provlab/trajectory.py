@@ -56,6 +56,11 @@ class Event:
 class NewValue(Event):
     value_id: int
     unverified: bool
+    # trace mode only: an explicit rule-derived degradation replaces the
+    # synthetic `unverified` semantics (see provlab.trace)
+    axis: str | None = None
+    factor: float = 1.0
+    taint: str | None = None
 
 
 @dataclass(frozen=True)

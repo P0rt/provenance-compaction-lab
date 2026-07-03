@@ -114,6 +114,9 @@ def _make_channel(spec: ExperimentSpec, llm: str, seed: int) -> ProseChannel:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
+    if args.trace is not None:
+        _run_trace(args)
+        return
     spec = load_spec(Path(args.config))
     if args.seeds is not None:
         spec.seeds = args.seeds
@@ -206,6 +209,96 @@ def cmd_run(args: argparse.Namespace) -> None:
     }
     (out_dir / "run_meta.json").write_text(json.dumps(meta, indent=2))
     print(f"done: {total_runs} runs in {meta['wall_seconds']}s → {out_dir}/")
+
+
+def _run_trace(args: argparse.Namespace) -> None:
+    """`prov-lab run --trace path.jsonl`: replay a real agent trace through
+    all four arms at every configured cadence. The oracle arm is the
+    full-provenance replay of the same trace."""
+    from .trace import (
+        DEFAULT_TAINT_RULES,
+        GenericJsonlAdapter,
+        load_taint_rules,
+        trace_to_events,
+    )
+
+    spec = load_spec(Path(args.config))
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    policies = default_policies(allowlist_window=spec.allowlist_window)
+    rules = (
+        load_taint_rules(Path(args.taint_rules))
+        if args.taint_rules is not None
+        else list(DEFAULT_TAINT_RULES)
+    )
+    adapter = GenericJsonlAdapter(Path(args.trace))
+    events, coverage = trace_to_events(
+        adapter.records(), rules, decision_every=spec.decision_every
+    )
+
+    gate_rows: list[dict[str, Any]] = []
+    drift_rows: list[dict[str, Any]] = []
+    curve_rows: list[dict[str, Any]] = []
+    prose_rows: list[dict[str, Any]] = []
+    t0 = time.monotonic()
+    sha = ""
+    for cadence in spec.compaction_cadences:
+        key = RunKey("main", cadence, "trace", 0)
+        config = ReplayConfig(
+            seed=0,
+            steps=coverage.n_mapped,
+            decision_every=spec.decision_every,
+            compaction_cadence=cadence,
+            keep_hops=spec.keep_hops,
+            reconstruction_penalty=spec.reconstruction_penalty,
+            profile=next(iter(spec.profiles.values())),  # unused in trace mode
+            rehydrate=args.rehydrate,
+            hop_log_path=out_dir / "hoplogs" / f"trace_c{cadence}.jsonl",
+        )
+        result = run_replay(
+            config, policies, _make_channel(spec, args.llm, 0), events=list(events)
+        )
+        sha = result.decision_log_sha256
+        gate_rows.extend(aggregate_gate_metrics(key, result.records))
+        drift_rows.extend(aggregate_drift(key, result.records))
+        curve_rows.extend(recon_curve_rows(key, result.recon_curve))
+        prose_rows.append(prose_stats_row(key, result.prose_stats))
+
+    pd.DataFrame(gate_rows).to_csv(out_dir / "gate_metrics.csv", index=False)
+    pd.DataFrame(drift_rows).to_csv(out_dir / "drift.csv", index=False)
+    pd.DataFrame(curve_rows).to_csv(out_dir / "recon_curve.csv", index=False)
+    pd.DataFrame(prose_rows).to_csv(out_dir / "prose_channel.csv", index=False)
+    # no synthetic death-spiral run in trace mode; the report tolerates this
+    pd.DataFrame(
+        columns=["run_type", "cadence", "profile", "seed", "step", "arm",
+                 "policy", "proceed", "oracle_proceed"]
+    ).to_csv(out_dir / "death_spiral_decisions.csv", index=False)
+    (out_dir / "trace_coverage.json").write_text(
+        json.dumps(coverage.as_json_obj(), indent=2)
+    )
+    meta = {
+        "config": str(args.config),
+        "trace": str(args.trace),
+        "taint_rules": str(args.taint_rules) if args.taint_rules else "(built-in defaults)",
+        "llm": args.llm,
+        "rehydrate": args.rehydrate,
+        "steps": coverage.n_mapped,
+        "reconstruction_penalty": spec.reconstruction_penalty,
+        "recon_gate_thresholds": {
+            p.name: threshold
+            for p in policies
+            if (threshold := p.recon_death_threshold()) is not None
+        },
+        "wall_seconds": round(time.monotonic() - t0, 2),
+        "decision_log_sha256_last_run": sha,
+    }
+    (out_dir / "run_meta.json").write_text(json.dumps(meta, indent=2))
+    print(
+        f"done: trace of {coverage.n_mapped} mapped steps "
+        f"({sum(coverage.skipped.values())} skipped) × "
+        f"{len(spec.compaction_cadences)} cadences in {meta['wall_seconds']}s "
+        f"→ {out_dir}/"
+    )
 
 
 def cmd_sweep(args: argparse.Namespace) -> None:
@@ -321,6 +414,15 @@ def main(argv: list[str] | None = None) -> None:
     p_run.add_argument("--no-rehydrate", dest="rehydrate", action="store_false")
     p_run.add_argument("--seeds", type=int, default=None)
     p_run.add_argument("--out", default="results")
+    p_run.add_argument(
+        "--trace", default=None,
+        help="replay a real agent trace (generic JSONL schema, see provlab.trace) "
+        "instead of the synthetic generator",
+    )
+    p_run.add_argument(
+        "--taint-rules", default=None,
+        help="YAML taint-derivation rules for --trace (defaults to the built-in rules)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_sweep = sub.add_parser(
