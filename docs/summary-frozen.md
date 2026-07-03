@@ -39,6 +39,13 @@ n = ln(θ) / ln(1 − p) compaction cycles. Empirical column is the first
 cycle after which the gate blocks every oracle-allowed decision in the
 death-spiral run (— when the run's horizon was too short to reach it).
 
+θ is the *pristine-axis* bound: it assumes the discounted score is 1.0.
+For a min-floor gate that is exact (reconstruction below θ blocks on its
+own). A discounted gate actually blocks once r < θ / (the freshest score
+reaching a decision), so its empirical death can arrive a cycle early —
+e.g. at p = 0.02, θ = 0.55, cycle 29 needs freshness ≥ 0.988 to proceed,
+and one ordinary cache read (×0.95) already rules that out.
+
 | gate | θ | analytic n | first whole cycle | empirical (death-spiral) |
 |---|---|---|---|---|
 | archive_all_axes_floor | 0.50 | 34.3 | 35 | 35 |
