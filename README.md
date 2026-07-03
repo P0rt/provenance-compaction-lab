@@ -199,6 +199,39 @@ flagged CRITICAL. Compare `examples/audit/dangerous.yaml` (the post's worked
 example as a spec) with `examples/audit/healthy.yaml` (same gates, fixed
 compaction and polarity). `--md audit.md` also writes the table to a file.
 
+## The hop-log pattern, vendorable (`provlab.store`)
+
+Rule 4 of the findings — append-only hop log plus rehydrate-on-demand — as a
+standalone SQLite module (stdlib `sqlite3` only, no other deps). Append every
+hop to cold storage, persist the compacted state, and give each gate the read
+mode its polarity deserves:
+
+```python
+from provlab.store import ProvenanceStore
+
+with ProvenanceStore("prov.sqlite") as store:
+    # write path: every hop goes to cold storage, forever
+    for hop in new_hops:
+        store.append_hop(hop)
+    # compaction: persist the running-min scores, the post-fold taint set,
+    # the last-K hops, and the fold aggregates
+    store.save_value(value_id, vector.scores, state.tainted_by,
+                     state.lineage.hops, state.lineage.folded)
+
+    # cheap read — decides on what survived (false-proceeds on folded taints)
+    view = store.read_blind(value_id)
+
+    # free safety — flags untrusted whenever detail was folded away
+    view = store.read_degraded(value_id)
+    if view.untrusted:
+        block()
+
+    # exact recovery — refetches folded hops, at a measured cost
+    view = store.read_rehydrated(value_id)
+    proceed = not any(t.startswith("taint:unverified_web:") for t in view.tainted_by)
+    print(view.lookups, "lookups,", view.bytes_read, "bytes read")
+```
+
 ## Development
 
 ```sh
