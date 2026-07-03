@@ -145,6 +145,44 @@ uv run prov-lab report [--out results]
 `--rehydrate` (default on) additionally evaluates lineage gates in rehydrate
 mode against the cold-storage hop log, counting lookups and bytes read.
 
+## Audit your pipeline in five minutes
+
+You don't need to adopt this repo's provenance scheme to get value from the
+finding. The failure mechanism is a *schema mismatch*: your compaction drops
+fields your gates read. `prov-lab audit` checks exactly that — no simulation,
+no traces, ~20 lines of YAML describing what your compaction preserves and
+what each gate consumes:
+
+```yaml
+compaction:
+  score_aggregates: true        # running min per axis survives
+  taint_ids: false              # only counts survive the fold
+  lineage_window: 5             # K
+  ordering_preserved: true
+gates:
+  - name: payment_no_untrusted_taint
+    reads: [taint_ids]
+    polarity: allow             # default-allow: block only on a matching taint
+    irreversible: true
+```
+
+```sh
+uv run prov-lab audit examples/audit/dangerous.yaml
+```
+
+```
+| gate                         | starved? | predicted failure | severity     |
+| payment_no_untrusted_taint   | YES      | false-proceed     | **CRITICAL** |
+| audit_requires_clean_window  | YES      | false-stop        | warn         |
+| summarize_freshness_strict   | no       | —                 | ok           |
+```
+
+Starved + default-allow predicts dangerous false-proceeds; starved +
+default-deny predicts expensive false-stops; irreversible ∧ false-proceed is
+flagged CRITICAL. Compare `examples/audit/dangerous.yaml` (the post's worked
+example as a spec) with `examples/audit/healthy.yaml` (same gates, fixed
+compaction and polarity). `--md audit.md` also writes the table to a file.
+
 ## Development
 
 ```sh

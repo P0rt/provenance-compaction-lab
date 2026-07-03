@@ -1,0 +1,25 @@
+# The post's worked example as an audit spec: last-K truncation drops taint
+# ids, and a default-allow payment gate reads them. Expected verdict:
+# payment_no_untrusted_taint → starved, false-proceed, CRITICAL.
+compaction:
+  score_aggregates: true        # running min per axis survives
+  taint_ids: false              # folded taint ids dropped — only counts survive
+  lineage_window: 5             # K
+  ordering_preserved: true
+
+gates:
+  - name: payment_no_untrusted_taint
+    reads: [taint_ids]
+    polarity: allow             # default-allow: block only on a matching taint
+    irreversible: true
+
+  - name: audit_requires_clean_window
+    reads: [hop_window]
+    window: 8                   # W > K — the proof gets folded away
+    polarity: deny              # default-deny: proceed only on proof
+    irreversible: false
+
+  - name: summarize_freshness_strict
+    reads: [scores]
+    polarity: allow
+    irreversible: false

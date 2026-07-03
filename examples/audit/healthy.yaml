@@ -1,0 +1,20 @@
+# A pipeline where every field the gates read survives the compaction:
+# taint ids are kept, the lineage window covers the widest gate window, and
+# the irreversible gate is default-deny anyway.
+compaction:
+  score_aggregates: true
+  taint_ids: true               # full taint ids survive compaction
+  lineage_window: 10            # K ≥ every gate's W
+  ordering_preserved: true
+
+gates:
+  - name: payment_requires_clean_history
+    reads: [taint_ids, hop_window]
+    window: 8
+    polarity: deny              # irreversible action fails expensive, not dangerous
+    irreversible: true
+
+  - name: summarize_freshness_strict
+    reads: [scores]
+    polarity: allow
+    irreversible: false

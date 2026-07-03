@@ -266,6 +266,22 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     print(f"done: {total} sweep runs in {meta['wall_seconds']}s → {out_dir}/")
 
 
+def cmd_audit(args: argparse.Namespace) -> None:
+    """Static compaction/gate mismatch check — no simulation, no traces."""
+    from .audit import AuditSpecError, load_audit_spec, render_findings, run_audit
+
+    try:
+        compaction, gate_specs = load_audit_spec(Path(args.spec))
+    except AuditSpecError as err:
+        raise SystemExit(f"audit spec error: {err}") from err
+    findings = run_audit(compaction, gate_specs)
+    rendered = render_findings(compaction, findings)
+    print(rendered)
+    if args.md is not None:
+        Path(args.md).write_text(rendered + "\n")
+        print(f"\nwrote {args.md}")
+
+
 def cmd_report(args: argparse.Namespace) -> None:
     report_path = Path(__file__).resolve().parents[2] / "analysis" / "report.py"
     if not report_path.exists():
@@ -314,6 +330,14 @@ def main(argv: list[str] | None = None) -> None:
     p_sweep.add_argument("--seeds", type=int, default=None)
     p_sweep.add_argument("--out", default="results-sweep")
     p_sweep.set_defaults(func=cmd_sweep)
+
+    p_audit = sub.add_parser(
+        "audit",
+        help="static check: which gate reads does your compaction starve?",
+    )
+    p_audit.add_argument("spec", help="YAML with compaction: and gates: sections")
+    p_audit.add_argument("--md", default=None, help="also write the table to a file")
+    p_audit.set_defaults(func=cmd_audit)
 
     p_report = sub.add_parser("report", help="build results/summary.md + figures")
     p_report.add_argument("--out", default="results")
