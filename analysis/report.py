@@ -24,6 +24,7 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FROZEN_LLM_GATE_METRICS = REPO_ROOT / "docs" / "data" / "llm_gate_metrics.csv"
+FROZEN_SWEEP_METRICS = REPO_ROOT / "docs" / "data" / "sweep_metrics.csv"
 
 ARMS = ("structural_min", "structural_perhop", "prose")
 GATE_CLASSES = ("score", "reconstruction", "lineage_blocklist", "lineage_allowlist")
@@ -425,13 +426,15 @@ def _crossover_lines(sweep_dir: Path | None) -> list[str]:
     """Crossover cadence (structural_min vs prose, reconstruction-coupled
     gates) as a function of the reconstruction penalty, plus the ~1/p scaling
     check. Emits docs/figures/fig_crossover_vs_penalty.png."""
-    if sweep_dir is None:
-        return []
-    path = sweep_dir / "sweep_metrics.csv"
-    if not path.exists():
+    candidates = []
+    if sweep_dir is not None:
+        candidates.append(sweep_dir / "sweep_metrics.csv")
+    candidates.append(FROZEN_SWEEP_METRICS)  # frozen aggregate, for fresh clones
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
         return []
     df = pd.read_csv(path)
-    meta_path = sweep_dir / "sweep_meta.json"
+    meta_path = path.parent / "sweep_meta.json"
     steps = 500
     if meta_path.exists():
         steps = int(json.loads(meta_path.read_text()).get("steps", 500))
