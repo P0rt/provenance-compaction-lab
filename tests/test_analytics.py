@@ -117,5 +117,11 @@ def test_crossover_interpolation_and_fit(tmp_path: Path) -> None:
 
 def test_crossover_skips_without_sweep(tmp_path: Path) -> None:
     report = load_report_module()
-    assert report._crossover_lines(tmp_path / "nope") == []
-    assert report._crossover_lines(None) == []
+    # neutralize the committed frozen fallback so "no sweep data" is testable
+    frozen = report.FROZEN_SWEEP_METRICS
+    report.FROZEN_SWEEP_METRICS = tmp_path / "missing.csv"
+    try:
+        assert report._crossover_lines(tmp_path / "nope") == []
+        assert report._crossover_lines(None) == []
+    finally:
+        report.FROZEN_SWEEP_METRICS = frozen
